@@ -1,0 +1,12 @@
+{
+    "KPlugin": {
+        "Category": "Appearance",
+        "Description": "Fade the windows covering a window when it is raised; fade or scale in the raised window itself when a huge or almost fully covering window was in front of it",
+        "Description[zh_CN]": "窗口被提升时遮挡它的窗口渐隐后于其后方渐显；若前方是巨大的或几乎完全遮挡它的窗口，则改为对被提升窗口本身做显隐或缩放进入",
+        "EnabledByDefault": false,
+        "License": "GPL-2.0-or-later",
+        "Name": "Better Transition",
+        "Name[zh_CN]": "更好的过渡"
+    },
+    "X-KDE-ConfigModule": "kwin_bettertransition_config"
+}

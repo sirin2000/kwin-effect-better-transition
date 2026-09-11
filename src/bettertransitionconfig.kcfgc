@@ -1,0 +1,5 @@
+File=bettertransition.kcfg
+ClassName=BetterTransitionConfig
+NameSpace=KWin
+Singleton=true
+Mutators=true
