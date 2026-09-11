@@ -49,7 +49,7 @@ sudo apt install cmake g++ extra-cmake-modules kwin-dev \
 ./install.sh            # 构建 + 安装到 /usr
 ```
 
-移动预构建文件至以下目录：
+或移动预构建文件至以下目录：
 
 ```
 /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/plugins/bettertransition.so
@@ -70,7 +70,7 @@ sudo apt install cmake g++ extra-cmake-modules kwin-dev \
 ./uninstall.sh
 ```
 
-手动删除插件文件
+或手动删除插件文件
 ```bash
 sudo rm -f /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/plugins/bettertransition.so
 sudo rm -f /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/configs/kwin_bettertransition_config.so
