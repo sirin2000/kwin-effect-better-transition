@@ -39,6 +39,8 @@ BetterTransitionEffect::BetterTransitionEffect()
             this, &BetterTransitionEffect::slotStackingOrderChanged);
     connect(effects, &EffectsHandler::windowAdded,
             this, &BetterTransitionEffect::slotWindowAdded);
+    connect(effects, &EffectsHandler::windowClosed,
+            this, &BetterTransitionEffect::slotWindowClosed);
     connect(effects, &EffectsHandler::windowDeleted,
             this, &BetterTransitionEffect::slotWindowDeleted);
 
@@ -61,6 +63,8 @@ BetterTransitionEffect::~BetterTransitionEffect()
     m_animations.clear();
     m_selfFades.clear();
     m_scaleIns.clear();
+    m_frozenFade.clear();
+    m_frozenSelfFade.clear();
     m_elevationRefs.clear();
     m_minimizedWindows.clear();
 }
@@ -82,6 +86,7 @@ void BetterTransitionEffect::reconfigure(ReconfigureFlags flags)
     m_targetOpacity = 1.0 - std::clamp(BetterTransitionConfig::fadeStrength() / 100.0, 0.0, 1.0);
     m_onlyOverlapping = BetterTransitionConfig::onlyOverlapping();
     m_includeSpecialWindows = BetterTransitionConfig::includeSpecialWindows();
+    m_elevateCoveringWindows = BetterTransitionConfig::elevateCoveringWindows();
 
     m_largeCovererScreenRatio = std::clamp(BetterTransitionConfig::largeCovererScreenRatio() / 100.0, 0.0, 1.0);
 
@@ -105,6 +110,26 @@ void BetterTransitionEffect::slotWindowAdded(EffectWindow *w)
         // Deliberately keep the entry when the window is unminimized: it is
         // consumed below, when the window is raised.
     });
+}
+
+void BetterTransitionEffect::slotWindowClosed(EffectWindow *w)
+{
+    // The window is closing but not deleted yet, and its own close animation
+    // may still be running. Freeze the opacity we computed for it instead of
+    // keeping the animation alive (which would fight with the close animation,
+    // and would leave it elevated above the raised window).
+    if (auto animationIt = m_animations.find(w); animationIt != m_animations.end()) {
+        m_frozenFade.insert(w, factorFor(*animationIt));
+        if (animationIt->elevated) {
+            releaseElevation(w);
+        }
+        m_animations.erase(animationIt);
+    }
+
+    if (auto selfFadeIt = m_selfFades.find(w); selfFadeIt != m_selfFades.end()) {
+        m_frozenSelfFade.insert(w, selfFadeFactorFor(*selfFadeIt));
+        m_selfFades.erase(selfFadeIt);
+    }
 }
 
 void BetterTransitionEffect::pruneMinimizedWindows()
@@ -132,6 +157,18 @@ void BetterTransitionEffect::slotStackingOrderChanged()
         return;
     }
 
+    // Index maps so the lookups below stay linear instead of O(n^2).
+    QHash<EffectWindow *, int> oldIndex;
+    oldIndex.reserve(m_previousOrder.size());
+    for (int i = 0; i < m_previousOrder.size(); ++i) {
+        oldIndex.insert(m_previousOrder.at(i), i);
+    }
+    QHash<EffectWindow *, int> newIndex;
+    newIndex.reserve(newOrder.size());
+    for (int i = 0; i < newOrder.size(); ++i) {
+        newIndex.insert(newOrder.at(i), i);
+    }
+
     // The raised window is the topmost window whose position in the stacking
     // order has increased. Windows that were just mapped are ignored - they are
     // not in the previous order at all.
@@ -139,11 +176,11 @@ void BetterTransitionEffect::slotStackingOrderChanged()
     int raisedIndex = -1;
     for (int i = 0; i < newOrder.size(); ++i) {
         EffectWindow *candidate = newOrder.at(i);
-        const int oldIndex = m_previousOrder.indexOf(candidate);
-        if (oldIndex < 0) {
+        const int candidateOldIndex = oldIndex.value(candidate, -1);
+        if (candidateOldIndex < 0) {
             continue;
         }
-        if (i > oldIndex && i > raisedIndex && isUsableWindow(candidate)) {
+        if (i > candidateOldIndex && i > raisedIndex && isUsableWindow(candidate)) {
             raised = candidate;
             raisedIndex = i;
         }
@@ -164,15 +201,22 @@ void BetterTransitionEffect::slotStackingOrderChanged()
     }
 
     {
-        // Every window that was covering the raised window before the raise.
+        // Windows that were covering the raised window before the raise and did
+        // end up behind it. A window that stays above the raised window (for
+        // example a keep-above surface) is not a coverer: it cannot be revealed
+        // by fading it, and it must not influence the occlusion ratio either.
         QList<EffectWindow *> coverers;
-        const int oldRaisedIndex = m_previousOrder.indexOf(raised);
+        const int oldRaisedIndex = oldIndex.value(raised, -1);
         for (int i = oldRaisedIndex + 1; i < m_previousOrder.size(); ++i) {
             EffectWindow *candidate = m_previousOrder.at(i);
             if (candidate == raised || !isUsableWindow(candidate)) {
                 continue;
             }
             if (!candidate->isOnCurrentDesktop() || !candidate->isOnCurrentActivity()) {
+                continue;
+            }
+            const int candidateNewIndex = newIndex.value(candidate, -1);
+            if (candidateNewIndex < 0 || candidateNewIndex >= raisedIndex) {
                 continue;
             }
             if (m_onlyOverlapping && !occludes(candidate, raised)) {
@@ -205,17 +249,12 @@ void BetterTransitionEffect::slotStackingOrderChanged()
                        && screenArea > 0.0
                        && largestCovererArea >= m_largeCovererScreenRatio * screenArea) {
                 // A single huge window covers the raised window. Fading that
-                // window out would be jarring, so the raised window performs the
-                // fade-out / hold / fade-in itself instead.
+                // window out would be jarring, so the raised window fades in
+                // itself instead.
                 startSelfFade(raised);
             } else {
-                // Only coverers that end up behind the raised window can fade
-                // back in behind it.
+                // Fade every coverer out and back in behind the raised window.
                 for (EffectWindow *occluder : std::as_const(coverers)) {
-                    const int newIndex = newOrder.indexOf(occluder);
-                    if (newIndex < 0 || newIndex >= raisedIndex) {
-                        continue;
-                    }
                     qreal startFactor = 1.0;
                     const auto animationIt = m_animations.constFind(occluder);
                     if (animationIt != m_animations.constEnd()) {
@@ -233,6 +272,13 @@ void BetterTransitionEffect::slotStackingOrderChanged()
 
 void BetterTransitionEffect::startAnimation(EffectWindow *occluder, EffectWindow *raised, qreal startFactor)
 {
+    // With FadeStrength == 0 the fade is an identity transform; skip it so an
+    // opaque occluder is not temporarily painted on top of the raised window
+    // for nothing.
+    if (m_targetOpacity >= 1.0) {
+        return;
+    }
+
     const std::chrono::milliseconds total = m_fadeOutDuration + m_holdDuration + m_fadeInDuration;
     if (total <= std::chrono::milliseconds::zero() || !occluder || !occluder->windowItem()) {
         return;
@@ -245,11 +291,14 @@ void BetterTransitionEffect::startAnimation(EffectWindow *occluder, EffectWindow
         animation.raised = raised;
         animation.startFactor = std::clamp(startFactor, 0.0, 1.0);
         animation.targetFactor = m_targetOpacity;
+        animation.fadeOutDuration = m_fadeOutDuration;
+        animation.holdDuration = m_holdDuration;
+        animation.fadeInDuration = m_fadeInDuration;
         animation.timeLine.setDuration(total);
         animation.timeLine.setDirection(TimeLine::Forward);
         animation.timeLine.setEasingCurve(QEasingCurve::Linear);
         animation.timeLine.reset();
-        if (!animation.elevated) {
+        if (m_elevateCoveringWindows && !animation.elevated) {
             acquireElevation(occluder);
             animation.elevated = true;
         }
@@ -261,11 +310,16 @@ void BetterTransitionEffect::startAnimation(EffectWindow *occluder, EffectWindow
     animation.raised = raised;
     animation.startFactor = std::clamp(startFactor, 0.0, 1.0);
     animation.targetFactor = m_targetOpacity;
+    animation.fadeOutDuration = m_fadeOutDuration;
+    animation.holdDuration = m_holdDuration;
+    animation.fadeInDuration = m_fadeInDuration;
     animation.timeLine = TimeLine(total, TimeLine::Forward);
     animation.timeLine.setEasingCurve(QEasingCurve::Linear);
 
-    acquireElevation(occluder);
-    animation.elevated = true;
+    if (m_elevateCoveringWindows) {
+        acquireElevation(occluder);
+        animation.elevated = true;
+    }
 
     m_animations.insert(occluder, animation);
     occluder->addRepaintFull();
@@ -273,6 +327,10 @@ void BetterTransitionEffect::startAnimation(EffectWindow *occluder, EffectWindow
 
 void BetterTransitionEffect::startSelfFade(EffectWindow *raised)
 {
+    if (m_targetOpacity >= 1.0) {
+        return;
+    }
+
     // The raise is already committed by the time this runs, so playing a
     // fade-out would first show the window popping to the front. Start right
     // away at the minimum opacity and only play the hold + fade-in.
@@ -283,15 +341,19 @@ void BetterTransitionEffect::startSelfFade(EffectWindow *raised)
 
     auto animationIt = m_selfFades.find(raised);
     if (animationIt != m_selfFades.end()) {
-        Animation &animation = *animationIt;
+        SelfFadeAnimation &animation = *animationIt;
         animation.targetFactor = m_targetOpacity;
+        animation.holdDuration = m_holdDuration;
+        animation.fadeInDuration = m_fadeInDuration;
         animation.timeLine.setDuration(total);
         animation.timeLine.setDirection(TimeLine::Forward);
         animation.timeLine.setEasingCurve(QEasingCurve::Linear);
         animation.timeLine.reset();
     } else {
-        Animation animation;
+        SelfFadeAnimation animation;
         animation.targetFactor = m_targetOpacity;
+        animation.holdDuration = m_holdDuration;
+        animation.fadeInDuration = m_fadeInDuration;
         animation.timeLine = TimeLine(total, TimeLine::Forward);
         animation.timeLine.setEasingCurve(QEasingCurve::Linear);
         m_selfFades.insert(raised, animation);
@@ -303,16 +365,22 @@ void BetterTransitionEffect::startSelfFade(EffectWindow *raised)
 
 void BetterTransitionEffect::startScaleIn(EffectWindow *raised)
 {
+    if (m_scaleInStartScale >= 1.0) {
+        return;
+    }
+
     if (!raised || !raised->windowItem()) {
         return;
     }
 
     auto scaleInIt = m_scaleIns.find(raised);
     if (scaleInIt != m_scaleIns.end()) {
+        scaleInIt->startScale = m_scaleInStartScale;
         scaleInIt->timeLine.setDuration(m_scaleInDuration);
         scaleInIt->timeLine.reset();
     } else {
         ScaleInAnimation animation;
+        animation.startScale = m_scaleInStartScale;
         animation.timeLine = TimeLine(m_scaleInDuration, TimeLine::Forward);
         animation.timeLine.setEasingCurve(QEasingCurve::Linear);
         m_scaleIns.insert(raised, animation);
@@ -330,9 +398,9 @@ qreal BetterTransitionEffect::factorFor(const Animation &animation) const
     }
 
     const qreal progress = std::clamp(animation.timeLine.progress(), 0.0, 1.0);
-    const qreal fadeOutFraction = m_fadeOutDuration.count() / total;
-    const qreal holdFraction = m_holdDuration.count() / total;
-    const qreal fadeInFraction = m_fadeInDuration.count() / total;
+    const qreal fadeOutFraction = animation.fadeOutDuration.count() / total;
+    const qreal holdFraction = animation.holdDuration.count() / total;
+    const qreal fadeInFraction = animation.fadeInDuration.count() / total;
 
     if (fadeOutFraction > 0.0 && progress < fadeOutFraction) {
         const qreal t = QEasingCurve(QEasingCurve::OutCubic).valueForProgress(progress / fadeOutFraction);
@@ -352,7 +420,7 @@ qreal BetterTransitionEffect::factorFor(const Animation &animation) const
     return interpolate(animation.targetFactor, 1.0, t);
 }
 
-qreal BetterTransitionEffect::selfFadeFactorFor(const Animation &animation) const
+qreal BetterTransitionEffect::selfFadeFactorFor(const SelfFadeAnimation &animation) const
 {
     const qreal total = animation.timeLine.duration().count();
     if (total <= 0.0) {
@@ -360,13 +428,13 @@ qreal BetterTransitionEffect::selfFadeFactorFor(const Animation &animation) cons
     }
 
     const qreal progress = std::clamp(animation.timeLine.progress(), 0.0, 1.0);
-    const qreal holdFraction = m_holdDuration.count() / total;
+    const qreal holdFraction = animation.holdDuration.count() / total;
 
     if (progress < holdFraction) {
         return animation.targetFactor;
     }
 
-    const qreal fadeInFraction = m_fadeInDuration.count() / total;
+    const qreal fadeInFraction = animation.fadeInDuration.count() / total;
     if (fadeInFraction <= 0.0) {
         return 1.0;
     }
@@ -438,7 +506,8 @@ void BetterTransitionEffect::prePaintScreen(ScreenPrePaintData &data)
 
 void BetterTransitionEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data)
 {
-    if (m_animations.contains(w) || m_selfFades.contains(w)) {
+    if (m_animations.contains(w) || m_selfFades.contains(w)
+        || m_frozenFade.contains(w) || m_frozenSelfFade.contains(w)) {
         // The window is painted with a reduced opacity, so the scene has to
         // repaint what is behind it as well.
         data.setTranslucent();
@@ -463,13 +532,22 @@ void BetterTransitionEffect::paintWindow(const RenderTarget &renderTarget, const
         data.multiplyOpacity(selfFadeFactorFor(*selfFadeIt));
     }
 
+    // Windows closed while their animation was running keep the opacity they
+    // had at close time, so our fade does not fight the close animation.
+    if (const auto frozenIt = m_frozenFade.constFind(w); frozenIt != m_frozenFade.constEnd()) {
+        data.multiplyOpacity(*frozenIt);
+    }
+    if (const auto frozenIt = m_frozenSelfFade.constFind(w); frozenIt != m_frozenSelfFade.constEnd()) {
+        data.multiplyOpacity(*frozenIt);
+    }
+
     const auto scaleInIt = m_scaleIns.constFind(w);
     if (scaleInIt != m_scaleIns.constEnd()) {
         const qreal progress = std::clamp(scaleInIt->timeLine.progress(), 0.0, 1.0);
         // OutCubic is monotonic: the window only grows, without any bounce or
         // overshoot.
         const qreal eased = QEasingCurve(QEasingCurve::OutCubic).valueForProgress(progress);
-        const qreal scale = interpolate(m_scaleInStartScale, 1.0, eased);
+        const qreal scale = interpolate(scaleInIt->startScale, 1.0, eased);
 
         // Scale around the center of the window, matching what
         // AnimationEffect does for a centered anchor.
@@ -485,8 +563,6 @@ void BetterTransitionEffect::paintWindow(const RenderTarget &renderTarget, const
 
 void BetterTransitionEffect::postPaintScreen()
 {
-    const std::chrono::milliseconds releaseThreshold = m_fadeOutDuration + m_holdDuration;
-
     for (auto it = m_animations.begin(); it != m_animations.end();) {
         EffectWindow *w = it.key();
         Animation &animation = *it;
@@ -497,7 +573,9 @@ void BetterTransitionEffect::postPaintScreen()
         }
 
         // Once the hold phase is over the occluder must drop behind the raised
-        // window, where it fades back in.
+        // window, where it fades back in. Use the durations this animation
+        // started with, not the current configuration.
+        const std::chrono::milliseconds releaseThreshold = animation.fadeOutDuration + animation.holdDuration;
         if (animation.elevated && animation.timeLine.elapsed() >= releaseThreshold) {
             releaseElevation(w);
             animation.elevated = false;
@@ -534,17 +612,26 @@ void BetterTransitionEffect::postPaintScreen()
         }
     }
 
+    for (auto it = m_frozenFade.constBegin(); it != m_frozenFade.constEnd(); ++it) {
+        it.key()->addRepaintFull();
+    }
+    for (auto it = m_frozenSelfFade.constBegin(); it != m_frozenSelfFade.constEnd(); ++it) {
+        it.key()->addRepaintFull();
+    }
+
     effects->postPaintScreen();
 }
 
 bool BetterTransitionEffect::isActive() const
 {
-    return !m_animations.isEmpty() || !m_selfFades.isEmpty() || !m_scaleIns.isEmpty();
+    return !m_animations.isEmpty() || !m_selfFades.isEmpty() || !m_scaleIns.isEmpty()
+        || !m_frozenFade.isEmpty() || !m_frozenSelfFade.isEmpty();
 }
 
 bool BetterTransitionEffect::blocksDirectScanout() const
 {
-    return !m_animations.isEmpty() || !m_selfFades.isEmpty() || !m_scaleIns.isEmpty();
+    return !m_animations.isEmpty() || !m_selfFades.isEmpty() || !m_scaleIns.isEmpty()
+        || !m_frozenFade.isEmpty() || !m_frozenSelfFade.isEmpty();
 }
 
 int BetterTransitionEffect::requestedEffectChainPosition() const
@@ -557,6 +644,8 @@ void BetterTransitionEffect::slotWindowDeleted(EffectWindow *w)
     m_animations.remove(w);
     m_selfFades.remove(w);
     m_scaleIns.remove(w);
+    m_frozenFade.remove(w);
+    m_frozenSelfFade.remove(w);
     m_elevationRefs.remove(w);
     m_minimizedWindows.remove(w);
     m_previousOrder.removeAll(w);

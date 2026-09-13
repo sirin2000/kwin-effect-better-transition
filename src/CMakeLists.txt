@@ -21,6 +21,7 @@ set_property(TARGET bettertransition APPEND PROPERTY AUTOMOC_MACRO_NAMES
 
 target_link_libraries(bettertransition PRIVATE
     KF6::ConfigCore
+    # KConfigSkeleton (generated from the .kcfg) lives in KConfigGui.
     KF6::ConfigGui
     KWin::kwin
 )

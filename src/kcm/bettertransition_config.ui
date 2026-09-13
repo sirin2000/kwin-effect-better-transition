@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>520</width>
-    <height>330</height>
+    <width>560</width>
+    <height>300</height>
    </rect>
   </property>
   <layout class="QFormLayout" name="formLayout">
@@ -15,6 +15,9 @@
     <widget class="QLabel" name="labelFadeOut">
      <property name="text">
       <string>Fade out duration:</string>
+     </property>
+     <property name="buddy">
+      <cstring>kcfg_FadeOutDuration</cstring>
      </property>
     </widget>
    </item>
@@ -32,12 +35,18 @@
      <property name="singleStep">
       <number>10</number>
      </property>
+     <property name="toolTip">
+      <string>How long the covering windows take to fade out. Not used when the raised window fades in itself.</string>
+     </property>
     </widget>
    </item>
    <item row="1" column="0">
     <widget class="QLabel" name="labelHold">
      <property name="text">
       <string>Hold duration:</string>
+     </property>
+     <property name="buddy">
+      <cstring>kcfg_HoldDuration</cstring>
      </property>
     </widget>
    </item>
@@ -55,12 +64,18 @@
      <property name="singleStep">
       <number>10</number>
      </property>
+     <property name="toolTip">
+      <string>How long the minimum opacity is kept before fading back in. Also delays the raised window's own fade-in.</string>
+     </property>
     </widget>
    </item>
    <item row="2" column="0">
     <widget class="QLabel" name="labelFadeIn">
      <property name="text">
       <string>Fade in duration:</string>
+     </property>
+     <property name="buddy">
+      <cstring>kcfg_FadeInDuration</cstring>
      </property>
     </widget>
    </item>
@@ -85,6 +100,9 @@
      <property name="text">
       <string>Fade strength:</string>
      </property>
+     <property name="buddy">
+      <cstring>kcfg_FadeStrength</cstring>
+     </property>
     </widget>
    </item>
    <item row="3" column="1">
@@ -97,6 +115,9 @@
      </property>
      <property name="maximum">
       <number>100</number>
+     </property>
+     <property name="toolTip">
+      <string>100 % means fully transparent. 0 % disables the fade animations entirely.</string>
      </property>
     </widget>
    </item>
@@ -115,9 +136,22 @@
     </widget>
    </item>
    <item row="6" column="0" colspan="2">
-    <widget class="QLabel" name="labelLargeCovererHeader">
+    <widget class="QCheckBox" name="kcfg_ElevateCoveringWindows">
      <property name="text">
-      <string>Fade the raised window itself when the largest covering window takes at least:</string>
+      <string>Paint the covering windows above the raised window while they fade out (stronger reveal)</string>
+     </property>
+     <property name="toolTip">
+      <string>Their inactive decorations and shadows briefly cover the raised window, which can look like the window is losing focus. Leave this off if you see flicker.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="0">
+    <widget class="QLabel" name="labelLargeCovererRatio">
+     <property name="text">
+      <string>Fade the raised window when the largest covering window covers at least:</string>
+     </property>
+     <property name="buddy">
+      <cstring>kcfg_LargeCovererScreenRatio</cstring>
      </property>
     </widget>
    </item>
@@ -133,18 +167,21 @@
       <number>100</number>
      </property>
      <property name="toolTip">
-      <string>Only applies when that window is also larger than the raised window</string>
+      <string>Only applies when that window is also larger than the raised window. Use 100 % to disable this rule.</string>
      </property>
     </widget>
    </item>
-   <item row="8" column="0" colspan="2">
-    <widget class="QLabel" name="labelScaleInHeader">
+   <item row="8" column="0">
+    <widget class="QLabel" name="labelScaleInThreshold">
      <property name="text">
       <string>Scale in the raised window when it was covered by more than:</string>
      </property>
+     <property name="buddy">
+      <cstring>kcfg_ScaleInThreshold</cstring>
+     </property>
     </widget>
    </item>
-   <item row="9" column="1">
+   <item row="8" column="1">
     <widget class="QSpinBox" name="kcfg_ScaleInThreshold">
      <property name="suffix">
       <string> %</string>
@@ -160,14 +197,17 @@
      </property>
     </widget>
    </item>
-   <item row="10" column="0">
+   <item row="9" column="0">
     <widget class="QLabel" name="labelScaleInDuration">
      <property name="text">
       <string>Scale in duration:</string>
      </property>
+     <property name="buddy">
+      <cstring>kcfg_ScaleInDuration</cstring>
+     </property>
     </widget>
    </item>
-   <item row="10" column="1">
+   <item row="9" column="1">
     <widget class="QSpinBox" name="kcfg_ScaleInDuration">
      <property name="suffix">
       <string> ms</string>
@@ -183,14 +223,17 @@
      </property>
     </widget>
    </item>
-   <item row="11" column="0">
+   <item row="10" column="0">
     <widget class="QLabel" name="labelScaleInStartScale">
      <property name="text">
       <string>Start scale:</string>
      </property>
+     <property name="buddy">
+      <cstring>kcfg_ScaleInStartScale</cstring>
+     </property>
     </widget>
    </item>
-   <item row="11" column="1">
+   <item row="10" column="1">
     <widget class="QSpinBox" name="kcfg_ScaleInStartScale">
      <property name="suffix">
       <string> %</string>
@@ -200,6 +243,9 @@
      </property>
      <property name="maximum">
       <number>100</number>
+     </property>
+     <property name="toolTip">
+      <string>Use 100 % to disable the scale-in animation</string>
      </property>
     </widget>
    </item>

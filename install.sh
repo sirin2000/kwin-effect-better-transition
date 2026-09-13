@@ -25,11 +25,15 @@ done
 echo "==> Installing to /usr (sudo)"
 sudo cmake --install build
 
-cat <<'EOF'
+echo
+echo "Installed files:"
+if [ -f build/install_manifest.txt ]; then
+    sed 's/^/  /' build/install_manifest.txt
+else
+    echo "  (see 'sudo cmake --install build' output above)"
+fi
 
-Installed:
-  /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/plugins/bettertransition.so
-  /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/configs/kwin_bettertransition_config.so
+cat <<'EOF'
 
 Enable it in "System Settings -> Desktop Effects" (search "Better Transition"), or run:
 

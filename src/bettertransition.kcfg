@@ -23,6 +23,13 @@
         <entry name="IncludeSpecialWindows" type="Bool">
             <default>false</default>
         </entry>
+        <!-- Temporarily paint the covering windows above the raised window while
+             they fade out. Stronger reveal, but their (inactive) decorations and
+             shadows briefly cover the raised window, which can read as the
+             raised window losing focus. -->
+        <entry name="ElevateCoveringWindows" type="Bool">
+            <default>false</default>
+        </entry>
         <!-- Fade the raised window itself when a single huge window covers it -->
         <entry name="LargeCovererScreenRatio" type="Int">
             <default>75</default>

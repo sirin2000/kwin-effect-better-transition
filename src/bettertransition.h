@@ -13,6 +13,7 @@
 #include <QHash>
 #include <QList>
 #include <QSet>
+#include <QSizeF>
 
 #include <chrono>
 
@@ -25,6 +26,9 @@ namespace KWin
  * When a window is raised above the windows that were covering it, the covering
  * windows fade out first, stay hidden for a short moment, and then fade back in
  * - but now behind the raised window, in their original relative stacking order.
+ * Only windows that actually end up behind the raised window count as coverers;
+ * a window that stays above it (e.g. a keep-above surface) is ignored, because
+ * it cannot be revealed that way.
  *
  * Two special cases take precedence over fading the covering windows:
  *
@@ -71,6 +75,7 @@ public:
 
 private Q_SLOTS:
     void slotWindowAdded(EffectWindow *w);
+    void slotWindowClosed(EffectWindow *w);
     void slotStackingOrderChanged();
     void slotWindowDeleted(EffectWindow *w);
 
@@ -87,22 +92,37 @@ private:
         qreal targetFactor = 0.0;
         // Whether this effect currently holds an elevation for the window.
         bool elevated = false;
+        // Phase durations snapshotted when the animation was (re)started, so a
+        // reconfigure() while it is running cannot skew the phase mapping.
+        std::chrono::milliseconds fadeOutDuration{0};
+        std::chrono::milliseconds holdDuration{0};
+        std::chrono::milliseconds fadeInDuration{0};
+    };
+
+    // Fades the raised window itself: hold + fade-in only.
+    struct SelfFadeAnimation
+    {
+        TimeLine timeLine;
+        qreal targetFactor = 0.0;
+        std::chrono::milliseconds holdDuration{0};
+        std::chrono::milliseconds fadeInDuration{0};
     };
 
     struct ScaleInAnimation
     {
         // Linear timeline; the easing curve is applied when sampling it.
         TimeLine timeLine;
+        // Start scale snapshotted at animation start.
+        qreal startScale = 1.0;
     };
 
     // Fades the covering windows out and back in behind the raised window.
     void startAnimation(EffectWindow *occluder, EffectWindow *raised, qreal startFactor);
-    // Fades the raised window itself out and back in (huge coverer case).
+    // Fades the raised window itself in (huge coverer case).
     void startSelfFade(EffectWindow *raised);
     void startScaleIn(EffectWindow *raised);
     qreal factorFor(const Animation &animation) const;
-    // Hold + fade-in only; the raised window starts at the minimum opacity.
-    qreal selfFadeFactorFor(const Animation &animation) const;
+    qreal selfFadeFactorFor(const SelfFadeAnimation &animation) const;
     qreal occlusionRatio(const EffectWindow *raised, const QList<EffectWindow *> &coverers) const;
     qreal screenAreaFor(const EffectWindow *w) const;
 
@@ -115,8 +135,13 @@ private:
     void pruneMinimizedWindows();
 
     QHash<EffectWindow *, Animation> m_animations;
-    QHash<EffectWindow *, Animation> m_selfFades;
+    QHash<EffectWindow *, SelfFadeAnimation> m_selfFades;
     QHash<EffectWindow *, ScaleInAnimation> m_scaleIns;
+    // Opacity frozen at the moment a window was closed, so our fade does not
+    // fight with the close animation (mirrors what the Dim Inactive effect
+    // does). Cleared in slotWindowDeleted().
+    QHash<EffectWindow *, qreal> m_frozenFade;
+    QHash<EffectWindow *, qreal> m_frozenSelfFade;
     QHash<EffectWindow *, int> m_elevationRefs;
     QList<EffectWindow *> m_previousOrder;
     // Windows that are minimized (or were minimized and not restored yet).
@@ -129,6 +154,10 @@ private:
     qreal m_targetOpacity = 0.0;
     bool m_onlyOverlapping = true;
     bool m_includeSpecialWindows = false;
+    // Paint the covering windows above the raised window while they fade out.
+    // Off by default: their inactive decorations/shadows would briefly cover
+    // the raised window.
+    bool m_elevateCoveringWindows = false;
 
     qreal m_largeCovererScreenRatio = 0.75;
 
